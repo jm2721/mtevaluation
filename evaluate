@@ -1,0 +1,152 @@
+#!/usr/bin/env python
+import argparse # optparse is deprecated
+from itertools import islice # slicing for iterators
+from nltk.corpus import wordnet as wn
+import sys
+
+all_synonyms = {}
+ 
+def word_matches(h, ref):
+    '''set_with_synonyms = {}
+    intersection = 0
+    for w in h:
+        set_with_synonyms[w] = []
+    for w in h:
+        for syn in getSynonyms(w):
+            set_with_synonyms[w].append(syn)
+    for w in ref:
+        if w in set_with_synonyms.itervalues():
+            intersection += 1
+    sys.stderr.write(str(intersection))
+    return intersection+0.0'''
+    set_with_synonyms = []
+    for w in ref:
+        for syn in getSynonyms(w):
+            set_with_synonyms.append(syn)
+    '''set_with_synonyms2 = []
+    for w in h:
+        for syn in getSynonyms(w):
+            set_with_synonyms2.append(syn)'''
+    return sum(1 for w in h if w in set(set_with_synonyms).union(set(ref)))+0.0
+
+def precision_with_synonyms(h, ref, wm):
+    '''set_with_synonyms = []
+    for w in ref:
+        for syn in getSynonyms(w):
+            set_with_synonyms.append(syn)'''
+    return wm/len(ref)
+    #return (sum(1 for w in h if w in set_with_synonyms)+0.0)/len(ref)
+
+def recall_with_synonyms(h, ref, wm):
+    '''set_with_synonyms = []
+    for w in ref:
+        for syn in getSynonyms(w):
+            set_with_synonyms.append(syn)
+    return (sum(1 for w in h if w in set_with_synonyms)+0.0)/len(h)'''
+    return wm/len(h)
+
+def precision(h, ref):
+    return (sum(1 for w in h if w in ref)+0.0)/len(ref)
+def recall(h, ref):
+    return (sum(1 for w in h if w in ref)+0.0)/len(h)
+
+def count_chunks(h, ref):
+    chunks = 1
+    segment = h[0] + " "
+    for i, word in enumerate(h):
+        if segment not in ref:
+            chunks+=1
+            segment = ""
+            segment+=word + " "
+        else:
+            if i != 0:
+                segment+=h[i] + " "
+    return chunks
+
+def METEOR_metric(h, ref):
+    alpha = .87
+    gamma = .32
+    beta = 3.0
+    chunks = count_chunks(h, ref)
+    #unigrams = word_matches(h, set(ref))
+    unigrams = len(ref)
+    p = precision(h, set(ref))
+    r = recall(h, set(ref))
+
+    numerator = p*r
+    if (numerator == 0):
+        return 0
+    denominator = ((1-alpha)*r + alpha*p)
+    #return numerator/denominator
+    return (1 - ((gamma*chunks/unigrams)**beta))*numerator/denominator
+
+def METEOR_metric_synonyms(h, ref):
+    alpha = .87
+    gamma = .32
+    beta = 3.0
+    chunks = count_chunks(h, ref)
+    #unigrams = word_matches(h, set(ref))
+    unigrams = len(ref)
+    wm = word_matches(h, set(ref))
+    p = precision_with_synonyms(h, set(ref), wm)
+    r = recall_with_synonyms(h, set(ref), wm)
+    numerator = p*r
+    if (numerator == 0):
+        return 0
+    denominator = ((1-alpha)*r + alpha*p)
+    #return numerator/denominator
+    return (1 - ((gamma*chunks/unigrams)**beta))*numerator/denominator
+
+def getSynonyms(word):
+    try:
+        global all_synonyms
+        if word in all_synonyms:
+          return all_synonyms[word]
+        else:
+          synonyms = []
+          for s in wn.synsets(word):
+              synonyms.append(s.name().split('.')[0])
+          all_synonyms[word] = set(synonyms)
+          return set(synonyms)
+    except UnicodeDecodeError:
+        return set(word)
+
+def main():
+    parser = argparse.ArgumentParser(description='Evaluate translation hypotheses.')
+    parser.add_argument('-i', '--input', default='data/hyp1-hyp2-ref',
+            help='input file (default data/hyp1-hyp2-ref)')
+    parser.add_argument('-n', '--num_sentences', default=None, type=int,
+            help='Number of hypothesis pairs to evaluate')
+    parser.add_argument('-s', '--synonyms', default=None, type=int,
+            help='Evaluate with synonyms if 1, without synonyms if 0 or anything else')
+    # note that if x == [1, 2, 3], then x[:None] == x[:] == x (copy); no need for sys.maxint
+    opts = parser.parse_args()
+    
+    # we create a generator and avoid loading all sentences into a list
+    def sentences():
+        with open(opts.input) as f:
+            for pair in f:
+                yield [sentence.strip().split() for sentence in pair.split(' ||| ')]
+ 
+    # note: the -n option does not work in the original code
+    i = 1
+    for h1, h2, ref in islice(sentences(), opts.num_sentences):
+        #h1_match = word_matches(h1, rset)
+        #h2_match = word_matches(h2, rset)
+        if opts.synonyms == 1:
+          h1_meteor = METEOR_metric_synonyms(h1, ref)
+          h2_meteor = METEOR_metric_synonyms(h2, ref)
+        else:
+          h1_meteor = METEOR_metric(h1, ref)
+          h2_meteor = METEOR_metric(h2, ref)
+        
+        if i%10000 == 0:
+            sys.stderr.write("Processed %d lines\n" % i)
+        print(1 if h1_meteor > h2_meteor else # \begin{cases}
+                (0 if h1_meteor == h2_meteor
+                    else -1)) # \end{cases}
+        i+=1
+ 
+# convention to allow import of this file as a module
+if __name__ == '__main__':
+    main()
